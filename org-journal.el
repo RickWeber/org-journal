@@ -421,17 +421,29 @@ Returns the last value from BODY. If the buffer didn't exist before it will be d
        (kill-buffer buf))
      result))
 
-(defvar org-journal-created-re " *:CREATED: *[0-9]\\{8\\}"
+(defvar org-journal-created-re-old " *:CREATED: *[0-9]\\{8\\}"
+  "Old regex to find created property.")
+
+(defvar org-journal-created-re (concat " *:CREATED: *" org-ts-regexp-inactive)
   "Regex to find created property.")
 
-(defsubst org-journal-search-forward-created (date)
+(defsubst org-journal-search-forward-created (date &optional bound noerror count)
   "Search for CREATED tag with date.
 
 DATE should be a calendar date list (MONTH DAY YEAR)."
   (re-search-forward
-   (format " *:CREATED: *%.4d%.2d%.2d" (nth 2 date) (car date) (cadr date))))
+   (concat " *:CREATED: *" (with-temp-buffer
+                             (org-insert-time-stamp
+                              (encode-time 0 0 0 (cadr date) (car date) (nth 2 date)) nil t)
+                             ;; Escape the special characters `[', `]'
+                             (goto-char (point-min))
+                             (insert "\\")
+                             (goto-char (1- (point-max)))
+                             (insert "\\")
+                             (buffer-string)))
+   bound noerror count))
 
-(defun org-journal-daily-p ()
+(defsubst org-journal-daily-p ()
   "Returns t if `org-journal-file-type' is set to `'daily'."
   (eq org-journal-file-type 'daily))
 
@@ -497,11 +509,11 @@ the first date of the year."
 
 (defun org-journal-dir-check-or-create ()
   "Check existence of `org-journal-dir'. If it doesn't exist, try to make directory."
-  (unless (file-exists-p org-journal-dir)
+  (if (file-exists-p org-journal-dir)
+      t ;; TODO(cschwarzgruber): run conversation function
     (if (yes-or-no-p (format "Journal directory %s not found. Create one? " org-journal-dir))
         (make-directory org-journal-dir t)
-      (error "Journal directory is necessary to use org-journal.")))
-  t)
+      (error "Journal directory is necessary to use org-journal."))))
 
 (defun org-journal-set-current-tag-alist ()
   "Set `org-current-tag-alist' for the current journal file.
@@ -603,7 +615,9 @@ hook is run."
           ;; For 'weekly, 'monthly and 'yearly journal entries
           ;; create a "CREATED" property with the current date.
           (unless (org-journal-daily-p)
-            (org-set-property "CREATED" (format-time-string "%Y%m%d" time)))
+            (org-set-property "CREATED" (with-temp-buffer
+                                          (org-insert-time-stamp time nil t)
+                                          (buffer-string))))
           (when org-journal-enable-encryption
             (unless (member org-crypt-tag-matcher (org-get-tags))
               (org-set-tags org-crypt-tag-matcher)))))
@@ -822,14 +836,15 @@ fall back to the old behavior of taking substrings."
 
 This is the counterpart of `org-journal-file-name->calendar-date' for
 'weekly, 'monthly and 'yearly journal files."
-  (let (date)
-    (setq date (org-entry-get (point) "CREATED"))
-    (unless date
+  (let (ts date)
+    (setq ts (org-entry-get (point) "CREATED"))
+    (unless ts
       (error "Entry at \"%s:%d\" doesn't have a \"CREATED\" property." (buffer-file-name) (point)))
-    (string-match "\\([0-9]\\{4\\}\\)\\([0-9]\\{2\\}\\)\\([0-9]\\{2\\}\\)" date)
-    (list (string-to-number (match-string 2 date))
-          (string-to-number (match-string 3 date))
-          (string-to-number (match-string 1 date)))))
+    (string-match org-ts-regexp-inactive ts)
+    (setq date (split-string (match-string 1 ts) "[ -]"))
+    (list (string-to-number (cadr date))   ;; Month
+          (string-to-number (caddr date))  ;; Day
+          (string-to-number (car date))))) ;; Year
 
 (defun org-journal-file->calendar-dates (file)
   "Return journal dates from FILE."
@@ -1145,8 +1160,12 @@ is nil or avoid switching when NOSELECT is non-nil."
                  (with-current-buffer buf
                    (save-mark-and-excursion
                      (goto-char (point-min))
-                     (setq point (re-search-forward
-                                  (format-time-string " *:CREATED: *%Y%m%d" time) nil t))))))
+                     (setq time (decode-time time))
+                     (let (date)
+                       (push (nth 5 time) date) ;; Year
+                       (push (nth 3 time) date) ;; Day
+                       (push (nth 4 time) date) ;; Month
+                       (setq point (org-journal-search-forward-created date nil t)))))))
         (progn
           ;; Use `find-file-noselect' instead of `view-file' as it does not respect `auto-mode-alist'
           (with-current-buffer buf

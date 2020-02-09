@@ -89,13 +89,15 @@
 (ert-deftest org-journal-carryover-items-test ()
   "Org journal new entry test."
   (org-journal-test-macro
-   (let ((org-journal-file-type 'weekly))
+   (let ((org-journal-file-type 'weekly)
+         ;; Always use english as time locale.
+         (system-time-locale "C"))
      (with-temp-buffer
        (insert "* Tuesday, 01/01/19\n")
-       (org-set-property "CREATED" "20190101")
+       (org-set-property "CREATED" "[2019-01-01 Thu]")
        (insert "** 13:00 Some journal entry\n")
        (insert "* Wednesday, 01/02/19\n")
-       (org-set-property "CREATED" "20190102")
+       (org-set-property "CREATED" "[2019-01-02 Wed]")
        (insert "** TODO First\n")
        (insert "** 13:00 Some journal entry 1\n")
        (insert "** TODO Second\n")
@@ -109,7 +111,9 @@
                         (insert-file-contents (org-journal-get-entry-path))
                         (buffer-substring-no-properties (point-min) (point-max)))
                       (concat "* Test header\n  :PROPERTIES:\n  :CREATED:  "
-                              (format-time-string "%Y%m%d")
+                              (with-temp-buffer
+                                (org-insert-time-stamp (current-time) nil t)
+                                (buffer-string))
                               "\n  :END:\n** TODO First\n** TODO Second\n"))))))
 
 (ert-deftest org-journal-carryover-keep-parents-test ()
